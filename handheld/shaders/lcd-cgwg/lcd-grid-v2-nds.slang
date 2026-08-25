@@ -19,6 +19,7 @@ layout(push_constant) uniform Push
     float MELONDS_RENDERER;
     float NDS_WIDE_LAYOUT;
     float LARGE_SCREEN_POSITION;
+    float NDS_SMALL_SCREEN_ALIGNMENT;
     float HYBRID_SMALL_SCREEN_MODE;
     float SECONDARY_SCALE;
     float SCREEN_GAP;
@@ -39,9 +40,10 @@ layout(push_constant) uniform Push
 #pragma parameter blacklevel     "Black level"                    0.05 0.0 0.5 0.01
 #pragma parameter ambient        "Ambient"                        0.0 0.0 0.5 0.01
 #pragma parameter BGR            "BGR"                            0.0 0.0 1.0 1.0
-#pragma parameter MELONDS_RENDERER "melonDS Renderer: 0=Software, 1=OpenGL" 0.0 0.0 1.0 1.0
-#pragma parameter NDS_WIDE_LAYOUT "Wide Layout: 0=melonDS, 1=Large, 2=DeSmuME" 0.0 0.0 2.0 1.0
+#pragma parameter MELONDS_RENDERER "melonDS DS Renderer: 0=Software, 1=OpenGL" 0.0 0.0 1.0 1.0
+#pragma parameter NDS_WIDE_LAYOUT "Wide Layout: 0=Hybrid, 1=Largescreen, 2=DeSmuME Hybrid" 0.0 0.0 2.0 1.0
 #pragma parameter LARGE_SCREEN_POSITION "Large Screen Position: 0=Left/Top, 1=Right/Bottom" 0.0 0.0 1.0 1.0
+#pragma parameter NDS_SMALL_SCREEN_ALIGNMENT "NooDS Small Screen Alignment: 0=Center, 1=Start, 2=End" 0.0 0.0 2.0 1.0
 #pragma parameter HYBRID_SMALL_SCREEN_MODE "Hybrid Small Screens: 0=Both, 1=Upper, 2=Lower" 0.0 0.0 2.0 1.0
 #pragma parameter SECONDARY_SCALE "Vertical Secondary Screen Scale (%)" 100.0 50.0 100.0 5.0
 #pragma parameter SCREEN_GAP     "Vertical Screen Gap (core pixels)" 0.0 0.0 126.0 1.0
@@ -146,6 +148,17 @@ bool matches_noods_gap(float normalizedGap)
            abs(normalizedGap - 144.0) < 0.25;
 }
 
+float noods_small_cross_offset(float containerExtentPx, float smallExtentPx)
+{
+    float freeExtentPx = max(containerExtentPx - smallExtentPx, 0.0);
+    float alignment = floor(clamp(params.NDS_SMALL_SCREEN_ALIGNMENT, 0.0, 2.0) + 0.5);
+    if (alignment > 1.5)
+        return freeExtentPx;
+    if (alignment > 0.5)
+        return 0.0;
+    return floor(freeExtentPx * 0.5);
+}
+
 bool select_region(vec2 coord, out LatticeRegion region)
 {
     const vec2 logicalSize = vec2(256.0, 192.0);
@@ -236,9 +249,10 @@ bool select_region(vec2 coord, out LatticeRegion region)
             vec2 smallExtentPx = vec2(256.0, 192.0) * renderScale;
             bool largeSecond = params.LARGE_SCREEN_POSITION > 0.5;
             vec2 largeOriginPx = largeSecond ? vec2(0.0, smallExtentPx.y + max(gapPx, 0.0)) : vec2(0.0);
+            float smallX = noods_small_cross_offset(sourceSize.x, smallExtentPx.x);
             vec2 smallOriginPx = largeSecond
-                ? vec2(128.0 * renderScale, 0.0)
-                : vec2(128.0 * renderScale, largeExtentPx.y + max(gapPx, 0.0));
+                ? vec2(smallX, 0.0)
+                : vec2(smallX, largeExtentPx.y + max(gapPx, 0.0));
             return select_pair(
                 coord,
                 region_from_pixels(largeOriginPx, largeExtentPx, sourceSize),
@@ -354,6 +368,11 @@ bool select_region(vec2 coord, out LatticeRegion region)
 
     if (singleSmall) {
         float smallY = floor((sourceSize.y - smallExtentPx.y) * 0.5);
+        // A non-Center alignment disambiguates NooDS's gapless horizontal
+        // enlarged output from the otherwise identical Largescreen geometry.
+        bool noodsAlignmentSelected = params.NDS_SMALL_SCREEN_ALIGNMENT > 0.5;
+        if (forceSingleSmall || (ambiguousWide && wideMode > 0.5 && wideMode < 1.5 && noodsAlignmentSelected))
+            smallY = noods_small_cross_offset(sourceSize.y, smallExtentPx.y);
         LatticeRegion small = region_from_pixels(vec2(smallX, smallY), smallExtentPx, sourceSize);
         return select_pair(coord, large, small, region);
     }
