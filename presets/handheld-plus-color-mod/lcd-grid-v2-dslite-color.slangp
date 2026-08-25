@@ -5,7 +5,7 @@ filter_linear0 = false
 scale_type0 = source
 scale0 = 1.0
 
-shader1 = "../../handheld/shaders/lcd-cgwg/lcd-grid-v2.slang"
+shader1 = "../../handheld/shaders/lcd-cgwg/lcd-grid-v2-nds.slang"
 filter_linear1 = "false"
 scale_type1 = "viewport"
 scale1 = "1.0"
