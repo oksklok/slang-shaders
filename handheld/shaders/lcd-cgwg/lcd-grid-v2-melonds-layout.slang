@@ -16,9 +16,7 @@ layout(push_constant) uniform Push
     float blacklevel;
     float ambient;
     float BGR;
-    float MELONDS_LAYOUT;
     float MELONDS_RENDERER;
-    float HYBRID_RATIO;
     float HYBRID_FLIPPED;
     float SECONDARY_SCALE;
     float SCREEN_GAP;
@@ -38,9 +36,7 @@ layout(push_constant) uniform Push
 #pragma parameter blacklevel     "Black level"                    0.05 0.0 0.5 0.01
 #pragma parameter ambient        "Ambient"                        0.0 0.0 0.5 0.01
 #pragma parameter BGR            "BGR"                            0.0 0.0 1.0 1.0
-#pragma parameter MELONDS_LAYOUT "melonDS Layout: 0=Hybrid, 1=Vertical" 0.0 0.0 1.0 1.0
 #pragma parameter MELONDS_RENDERER "melonDS Renderer: 0=Software, 1=OpenGL" 0.0 0.0 1.0 1.0
-#pragma parameter HYBRID_RATIO   "melonDS Hybrid Ratio: 2:1 / 3:1"     2.0 2.0 3.0 1.0
 #pragma parameter HYBRID_FLIPPED "Hybrid Large Screen Side: 0=Left, 1=Right" 0.0 0.0 1.0 1.0
 #pragma parameter SECONDARY_SCALE "Vertical Secondary Screen Scale (%)" 100.0 50.0 100.0 5.0
 #pragma parameter SCREEN_GAP     "Vertical Screen Gap (core pixels)" 0.0 0.0 126.0 1.0
@@ -108,21 +104,26 @@ bool contains_coord(vec2 coord, LatticeRegion region)
            all(lessThan(coord, region.origin + region.extent));
 }
 
+bool matches_size(vec2 actual, vec2 expected)
+{
+    return all(lessThan(abs(actual - expected), vec2(0.25)));
+}
+
+bool integer_scale(float scale)
+{
+    return scale >= 1.0 && abs(scale - floor(scale + 0.5)) < 0.001;
+}
+
 bool select_region(vec2 coord, out LatticeRegion region)
 {
     const vec2 logicalSize = vec2(256.0, 192.0);
-    float ratio = floor(params.HYBRID_RATIO + 0.5);
+    vec2 sourceSize = global.SourceSize.xy;
 
-    // Test-only stock-equivalence control. The user-facing range is 2:1 / 3:1.
-    if (ratio < 1.5) {
-        region = LatticeRegion(vec2(0.0), vec2(1.0), logicalSize);
-        return contains_coord(coord, region);
-    }
-
-    if (params.MELONDS_LAYOUT > 0.5) {
-        float renderScale = global.SourceSize.x / logicalSize.x;
+    // Vertical layouts are one screen wide; the retained scale and gap determine the height.
+    float verticalScale = sourceSize.x / logicalSize.x;
+    if (integer_scale(verticalScale)) {
+        float renderScale = floor(verticalScale + 0.5);
         float secondaryScale = clamp(params.SECONDARY_SCALE, 50.0, 100.0) / 100.0;
-        vec2 sourceSize = global.SourceSize.xy;
         vec2 primaryExtentPx = logicalSize * renderScale;
         vec2 secondaryExtentPx = floor(primaryExtentPx * secondaryScale);
         float secondaryLeftPx = primaryExtentPx.x * (1.0 - secondaryScale) * 0.5;
@@ -136,25 +137,58 @@ bool select_region(vec2 coord, out LatticeRegion region)
             secondaryOriginXPx,
             renderScale * (logicalSize.y + max(params.SCREEN_GAP, 0.0))
         );
+        vec2 expectedSize = vec2(primaryExtentPx.x, secondaryOriginPx.y + secondaryExtentPx.y);
 
-        LatticeRegion primary = LatticeRegion(
-            vec2(0.0),
-            primaryExtentPx / sourceSize,
-            logicalSize
-        );
-        LatticeRegion secondary = LatticeRegion(
-            secondaryOriginPx / sourceSize,
-            secondaryExtentPx / sourceSize,
-            logicalSize
-        );
+        if (matches_size(sourceSize, expectedSize)) {
+            LatticeRegion primary = LatticeRegion(
+                vec2(0.0),
+                primaryExtentPx / sourceSize,
+                logicalSize
+            );
+            LatticeRegion secondary = LatticeRegion(
+                secondaryOriginPx / sourceSize,
+                secondaryExtentPx / sourceSize,
+                logicalSize
+            );
 
-        if (contains_coord(coord, primary)) {
-            region = primary;
-            return true;
+            if (contains_coord(coord, primary)) {
+                region = primary;
+                return true;
+            }
+            if (contains_coord(coord, secondary)) {
+                region = secondary;
+                return true;
+            }
+            return false;
         }
-        if (contains_coord(coord, secondary)) {
-            region = secondary;
-            return true;
+    }
+
+    // Supported Hybrid ratios have distinct integer-scaled framebuffer dimensions.
+    float ratio = 0.0;
+    float hybridScale2 = sourceSize.y / (logicalSize.y * 2.0);
+    float hybridScale3 = sourceSize.y / (logicalSize.y * 3.0);
+    if (integer_scale(hybridScale2) && matches_size(
+        sourceSize,
+        vec2(logicalSize.x * 3.0, logicalSize.y * 2.0) * floor(hybridScale2 + 0.5)
+    )) {
+        ratio = 2.0;
+    }
+    else if (integer_scale(hybridScale3) && matches_size(
+        sourceSize,
+        vec2(logicalSize.x * 4.0, logicalSize.y * 3.0) * floor(hybridScale3 + 0.5)
+    )) {
+        ratio = 3.0;
+    }
+
+    // Preserve the stock single-screen path; all other unsupported sizes pass through.
+    if (ratio < 1.5) {
+        float stockScale = sourceSize.x / logicalSize.x;
+        if (integer_scale(stockScale) && matches_size(
+            sourceSize,
+            logicalSize * floor(stockScale + 0.5)
+        )) {
+            region = LatticeRegion(vec2(0.0), vec2(1.0), logicalSize);
+            return contains_coord(coord, region);
         }
         return false;
     }
