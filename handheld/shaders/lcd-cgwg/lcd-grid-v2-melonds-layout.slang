@@ -17,6 +17,7 @@ layout(push_constant) uniform Push
     float ambient;
     float BGR;
     float MELONDS_LAYOUT;
+    float MELONDS_RENDERER;
     float HYBRID_RATIO;
     float HYBRID_FLIPPED;
     float SECONDARY_SCALE;
@@ -38,6 +39,7 @@ layout(push_constant) uniform Push
 #pragma parameter ambient        "Ambient"                        0.0 0.0 0.5 0.01
 #pragma parameter BGR            "BGR"                            0.0 0.0 1.0 1.0
 #pragma parameter MELONDS_LAYOUT "melonDS Layout: 0=Hybrid, 1=Vertical" 0.0 0.0 1.0 1.0
+#pragma parameter MELONDS_RENDERER "melonDS Renderer: 0=Software, 1=OpenGL" 0.0 0.0 1.0 1.0
 #pragma parameter HYBRID_RATIO   "melonDS Hybrid Ratio: 2:1 / 3:1"     2.0 2.0 3.0 1.0
 #pragma parameter HYBRID_FLIPPED "Hybrid Large Screen Side: 0=Left, 1=Right" 0.0 0.0 1.0 1.0
 #pragma parameter SECONDARY_SCALE "Vertical Secondary Screen Scale (%)" 100.0 50.0 100.0 5.0
@@ -123,10 +125,17 @@ bool select_region(vec2 coord, out LatticeRegion region)
         vec2 sourceSize = global.SourceSize.xy;
         vec2 primaryExtentPx = logicalSize * renderScale;
         vec2 secondaryExtentPx = floor(primaryExtentPx * secondaryScale);
-        vec2 secondaryOriginPx = floor(vec2(
-            primaryExtentPx.x * (1.0 - secondaryScale) * 0.5,
+        float secondaryLeftPx = primaryExtentPx.x * (1.0 - secondaryScale) * 0.5;
+        float secondaryOriginXPx = floor(secondaryLeftPx);
+        // Software truncates a copied rectangle; OpenGL rasterizes the full floating-point span.
+        if (params.MELONDS_RENDERER > 0.5) {
+            float secondaryRightPx = secondaryLeftPx + primaryExtentPx.x * secondaryScale;
+            secondaryExtentPx.x = ceil(secondaryRightPx) - secondaryOriginXPx;
+        }
+        vec2 secondaryOriginPx = vec2(
+            secondaryOriginXPx,
             renderScale * (logicalSize.y + max(params.SCREEN_GAP, 0.0))
-        ));
+        );
 
         LatticeRegion primary = LatticeRegion(
             vec2(0.0),

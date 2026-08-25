@@ -1,21 +1,27 @@
-shaders = "3"
+shaders = "4"
 
-shader0 = ../../reshade/shaders/LUT/multiLUT.slang
-filter_linear0 = false
-scale_type0 = source
-scale0 = 1.0
+shader0 = "../../motionblur/shaders/response-time.slang"
+filter_linear0 = "false"
+scale_type0 = "source"
+scale0 = "1.0"
 
-shader1 = "../../handheld/shaders/lcd-cgwg/lcd-grid-v2-melonds-hybrid.slang"
-filter_linear1 = "false"
-scale_type1 = "viewport"
-scale1 = "1.0"
+shader1 = "../../reshade/shaders/LUT/multiLUT.slang"
+filter_linear1 = false
+scale_type1 = source
+scale1 = 1.0
 
-shader2 = "../../handheld/shaders/color/nds-color.slang"
+shader2 = "../../handheld/shaders/lcd-cgwg/lcd-grid-v2-melonds-layout.slang"
 filter_linear2 = "false"
-scale_type2 = "source"
+scale_type2 = "viewport"
 scale2 = "1.0"
 
+shader3 = "../../handheld/shaders/color/nds-color.slang"
+filter_linear3 = "false"
+scale_type3 = "source"
+scale3 = "1.0"
+
 textures = SamplerLUT1;SamplerLUT2
+response_time = "0.111"
 SamplerLUT1 = ../../reshade/shaders/LUT/64.png
 SamplerLUT1_linear = true
 SamplerLUT2 = ../../handheld/shaders/color/lut/nds-grey.png
@@ -35,6 +41,7 @@ blacklevel = "0"
 ambient = "0"
 BGR = "0"
 MELONDS_LAYOUT = "0"
+MELONDS_RENDERER = "0"
 HYBRID_RATIO = "2"
 HYBRID_FLIPPED = "0"
 SECONDARY_SCALE = "100"
