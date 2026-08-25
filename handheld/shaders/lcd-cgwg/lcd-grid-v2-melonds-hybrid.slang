@@ -34,7 +34,7 @@ layout(push_constant) uniform Push
 #pragma parameter blacklevel     "Black level"                    0.05 0.0 0.5 0.01
 #pragma parameter ambient        "Ambient"                        0.0 0.0 0.5 0.01
 #pragma parameter BGR            "BGR"                            0.0 0.0 1.0 1.0
-#pragma parameter HYBRID_RATIO   "Logical Regions: 1=Full, 2/3=Hybrid" 2.0 1.0 3.0 1.0
+#pragma parameter HYBRID_RATIO   "melonDS Hybrid Ratio: 2:1 / 3:1"     2.0 2.0 3.0 1.0
 #pragma parameter HYBRID_FLIPPED "Hybrid Large Screen Side: 0=Left, 1=Right" 0.0 0.0 1.0 1.0
 
 layout(std140, set = 0, binding = 0) uniform UBO
@@ -105,6 +105,7 @@ bool select_region(vec2 coord, out LatticeRegion region)
     const vec2 logicalSize = vec2(256.0, 192.0);
     float ratio = floor(params.HYBRID_RATIO + 0.5);
 
+    // Test-only stock-equivalence control. The user-facing range is 2:1 / 3:1.
     if (ratio < 1.5) {
         region = LatticeRegion(vec2(0.0), vec2(1.0), logicalSize);
         return contains_coord(coord, region);
