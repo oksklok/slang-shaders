@@ -16,8 +16,11 @@ layout(push_constant) uniform Push
     float blacklevel;
     float ambient;
     float BGR;
+    float MELONDS_LAYOUT;
     float HYBRID_RATIO;
     float HYBRID_FLIPPED;
+    float SECONDARY_SCALE;
+    float SCREEN_GAP;
 } params;
 
 #pragma parameter RSUBPIX_R      "Colour of R subpixel: R"       1.0 0.0 1.0 0.01
@@ -34,8 +37,11 @@ layout(push_constant) uniform Push
 #pragma parameter blacklevel     "Black level"                    0.05 0.0 0.5 0.01
 #pragma parameter ambient        "Ambient"                        0.0 0.0 0.5 0.01
 #pragma parameter BGR            "BGR"                            0.0 0.0 1.0 1.0
+#pragma parameter MELONDS_LAYOUT "melonDS Layout: 0=Hybrid, 1=Vertical" 0.0 0.0 1.0 1.0
 #pragma parameter HYBRID_RATIO   "melonDS Hybrid Ratio: 2:1 / 3:1"     2.0 2.0 3.0 1.0
 #pragma parameter HYBRID_FLIPPED "Hybrid Large Screen Side: 0=Left, 1=Right" 0.0 0.0 1.0 1.0
+#pragma parameter SECONDARY_SCALE "Vertical Secondary Screen Scale (%)" 100.0 50.0 100.0 5.0
+#pragma parameter SCREEN_GAP     "Vertical Screen Gap (core pixels)" 0.0 0.0 126.0 1.0
 
 layout(std140, set = 0, binding = 0) uniform UBO
 {
@@ -109,6 +115,39 @@ bool select_region(vec2 coord, out LatticeRegion region)
     if (ratio < 1.5) {
         region = LatticeRegion(vec2(0.0), vec2(1.0), logicalSize);
         return contains_coord(coord, region);
+    }
+
+    if (params.MELONDS_LAYOUT > 0.5) {
+        float renderScale = global.SourceSize.x / logicalSize.x;
+        float secondaryScale = clamp(params.SECONDARY_SCALE, 50.0, 100.0) / 100.0;
+        vec2 sourceSize = global.SourceSize.xy;
+        vec2 primaryExtentPx = logicalSize * renderScale;
+        vec2 secondaryExtentPx = floor(primaryExtentPx * secondaryScale);
+        vec2 secondaryOriginPx = floor(vec2(
+            primaryExtentPx.x * (1.0 - secondaryScale) * 0.5,
+            renderScale * (logicalSize.y + max(params.SCREEN_GAP, 0.0))
+        ));
+
+        LatticeRegion primary = LatticeRegion(
+            vec2(0.0),
+            primaryExtentPx / sourceSize,
+            logicalSize
+        );
+        LatticeRegion secondary = LatticeRegion(
+            secondaryOriginPx / sourceSize,
+            secondaryExtentPx / sourceSize,
+            logicalSize
+        );
+
+        if (contains_coord(coord, primary)) {
+            region = primary;
+            return true;
+        }
+        if (contains_coord(coord, secondary)) {
+            region = secondary;
+            return true;
+        }
+        return false;
     }
 
     float columnWidth = 1.0 / (ratio + 1.0);
