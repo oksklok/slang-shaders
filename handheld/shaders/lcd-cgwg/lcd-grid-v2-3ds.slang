@@ -196,23 +196,39 @@ bool select_region(vec2 coord, out LatticeRegion region)
     return false;
 }
 
+// On an unresolved screen, integrate the source footprint of each native LCD
+// cell instead of selecting one texel from the core's fractionally scaled image.
+// Retain the established sampling on resolved screens; smoothly transition so
+// filtering the small screen does not cost a full-screen supersampling pass.
+// Edge taps never leave this screen. Native nearest replication stays sharp.
 vec3 fetch_logical(LatticeRegion region, ivec2 logicalCoord)
 {
     logicalCoord = clamp(logicalCoord, ivec2(0), ivec2(region.logicalSize) - ivec2(1));
-    // Clamp both the logical neighbor and its physical fetch. texelFetch avoids
-    // linear-filter taps crossing into the other screen or the background.
     vec2 origin = region.origin * global.SourceSize.xy;
-    vec2 end = (region.origin + region.extent) * global.SourceSize.xy;
-    ivec2 first = ivec2(ceil(origin - vec2(0.5)));
-    ivec2 last = ivec2(ceil(end - vec2(0.5))) - ivec2(1);
-    first = clamp(first, ivec2(0), ivec2(global.SourceSize.xy) - ivec2(1));
-    last = clamp(last, first, ivec2(global.SourceSize.xy) - ivec2(1));
-    vec2 samplePosition = origin +
-        (vec2(logicalCoord) + vec2(0.5)) * (end - origin) / region.logicalSize;
-    ivec2 sourceCoord = clamp(ivec2(floor(samplePosition)), first, last);
-    vec3 sourceColor = texelFetch(Source, sourceCoord, 0).rgb;
-    return pow(vec3(params.gain) * sourceColor + vec3(params.blacklevel),
-               vec3(params.gamma)) + vec3(params.ambient);
+    vec2 extent = region.extent * global.SourceSize.xy;
+    vec2 cell = extent / region.logicalSize;
+    vec2 lo = origin + vec2(logicalCoord) * cell;
+    vec2 hi = origin + vec2(logicalCoord + ivec2(1)) * cell;
+    ivec2 regionMin = ivec2(ceil(origin - vec2(0.5)));
+    ivec2 regionMax = ivec2(ceil(origin + extent - vec2(0.5))) - ivec2(1);
+    regionMin = clamp(regionMin, ivec2(0), ivec2(global.SourceSize.xy) - ivec2(1));
+    regionMax = clamp(regionMax, regionMin, ivec2(global.SourceSize.xy) - ivec2(1));
+    vec3 centre = texelFetch(Source, clamp(ivec2(floor((lo + hi) * 0.5)), regionMin, regionMax), 0).rgb;
+    centre = pow(vec3(params.gain) * centre + vec3(params.blacklevel), vec3(params.gamma)) + vec3(params.ambient);
+    vec2 outputScale = region.extent * global.OutputSize.xy / region.logicalSize;
+    float filtering = 1.0 - smoothstep(2.0, 2.5, min(outputScale.x, outputScale.y));
+    if (filtering <= 0.0) return centre;
+    vec3 sum = vec3(0.0);
+    for (int y = int(floor(lo.y)); y < int(ceil(hi.y)); ++y) {
+        float wy = max(0.0, min(hi.y, float(y + 1)) - max(lo.y, float(y)));
+        for (int x = int(floor(lo.x)); x < int(ceil(hi.x)); ++x) {
+            float wx = max(0.0, min(hi.x, float(x + 1)) - max(lo.x, float(x)));
+            vec3 c = texelFetch(Source, clamp(ivec2(x, y), regionMin, regionMax), 0).rgb;
+            sum += wx * wy * (pow(vec3(params.gain) * c + vec3(params.blacklevel),
+                                  vec3(params.gamma)) + vec3(params.ambient));
+        }
+    }
+    return mix(centre, sum / (cell.x * cell.y), filtering);
 }
 
 // integral of (1 - x^2 - x^4 + x^6)^2
@@ -250,42 +266,42 @@ void main()
     vec2 logicalCoord = (vTexCoord - region.origin) / logicalTexelSize;
     vec2 logicalRange = global.OutputSize.zw / logicalTexelSize;
 
-    vec3 cred   = pow(vec3(params.RSUBPIX_R, params.RSUBPIX_G, params.RSUBPIX_B), vec3(outgamma));
+    vec3 cred = pow(vec3(params.RSUBPIX_R, params.RSUBPIX_G, params.RSUBPIX_B), vec3(outgamma));
     vec3 cgreen = pow(vec3(params.GSUBPIX_R, params.GSUBPIX_G, params.GSUBPIX_B), vec3(outgamma));
-    vec3 cblue  = pow(vec3(params.BSUBPIX_R, params.BSUBPIX_G, params.BSUBPIX_B), vec3(outgamma));
+    vec3 cblue = pow(vec3(params.BSUBPIX_R, params.BSUBPIX_G, params.BSUBPIX_B), vec3(outgamma));
 
-    ivec2 tli = ivec2(floor(logicalCoord - vec2(0.4999)));
-
-    vec3 lcol, rcol;
-    float subpix = (logicalCoord.x - 0.4999 - float(tli.x))*3.0;
-    float rsubpix = logicalRange.x * 3.0;
-
-    lcol = vec3(intsmear(subpix+1.0, rsubpix, 1.5, coeffs_x),
-                intsmear(subpix    , rsubpix, 1.5, coeffs_x),
-                intsmear(subpix-1.0, rsubpix, 1.5, coeffs_x));
-    rcol = vec3(intsmear(subpix-2.0, rsubpix, 1.5, coeffs_x),
-                intsmear(subpix-3.0, rsubpix, 1.5, coeffs_x),
-                intsmear(subpix-4.0, rsubpix, 1.5, coeffs_x));
-
-    if (params.BGR > 0.5) {
-        lcol.rgb = lcol.bgr;
-        rcol.rgb = rcol.bgr;
+    // At low output scale the RGB aperture is not resolvable. Blend towards
+    // area-filtered cell colours, per screen, not a blur of the composite.
+    // Both kernels have the same integrated light output, avoiding a gain or
+    // white-point change as the grid fades. At >=4 pixels/cell it is unchanged.
+    float visibility = smoothstep(2.5, 4.0, min(1.0 / logicalRange.x, 1.0 / logicalRange.y));
+    float meanX = intsmear_func(1.0, coeffs_x); // full aperture / RGB period
+    float meanY = 1.26 * intsmear_func(1.0, coeffs_y);
+    vec2 lo = logicalCoord - logicalRange * 0.5;
+    vec2 hi = logicalCoord + logicalRange * 0.5;
+    // Include the entire aperture plus the output-pixel footprint. The old
+    // fixed 2x2 neighbourhood misses edge lobes at low output scales.
+    vec2 support = visibility > 0.0 ? vec2(1.0 / 3.0, 0.13) : vec2(0.0);
+    ivec2 first = ivec2(floor(lo - support));
+    ivec2 last = ivec2(floor(hi + support));
+    vec3 averageColor = vec3(0.0);
+    for (int y = first.y; y <= last.y; ++y) {
+        float plainY = max(0.0, min(hi.y, float(y + 1)) - max(lo.y, float(y))) / logicalRange.y;
+        float gridY = intsmear(logicalCoord.y - float(y) - 0.5, logicalRange.y, 0.63, coeffs_y);
+        float wy = mix(plainY * meanY, gridY, visibility);
+        if (wy <= 0.0) continue;
+        for (int x = first.x; x <= last.x; ++x) {
+            float plainX = max(0.0, min(hi.x, float(x + 1)) - max(lo.x, float(x))) / logicalRange.x;
+            float phase = (logicalCoord.x - float(x) - 0.5) * 3.0;
+            vec3 gridX = vec3(intsmear(phase + 1.0, logicalRange.x * 3.0, 1.5, coeffs_x),
+                              intsmear(phase, logicalRange.x * 3.0, 1.5, coeffs_x),
+                              intsmear(phase - 1.0, logicalRange.x * 3.0, 1.5, coeffs_x));
+            if (params.BGR > 0.5) gridX = gridX.bgr;
+            vec3 wx = mix(vec3(plainX * meanX), gridX, visibility);
+            if (max(max(wx.r, wx.g), wx.b) <= 0.0) continue;
+            averageColor += fetch_logical(region, ivec2(x, y)) * wx * wy;
+        }
     }
-
-    float tcol, bcol;
-    subpix = logicalCoord.y - 0.4999 - float(tli.y);
-    rsubpix = logicalRange.y;
-    tcol = intsmear(subpix    ,rsubpix, 0.63, coeffs_y);
-    bcol = intsmear(subpix-1.0,rsubpix, 0.63, coeffs_y);
-
-    vec3 topLeftColor     = fetch_logical(region, tli + ivec2(0,0)) * lcol * vec3(tcol);
-    vec3 bottomRightColor = fetch_logical(region, tli + ivec2(1,1)) * rcol * vec3(bcol);
-    vec3 bottomLeftColor  = fetch_logical(region, tli + ivec2(0,1)) * lcol * vec3(bcol);
-    vec3 topRightColor    = fetch_logical(region, tli + ivec2(1,0)) * rcol * vec3(tcol);
-
-    vec3 averageColor = topLeftColor + bottomRightColor + bottomLeftColor + topRightColor;
-
     averageColor = mat3(cred, cgreen, cblue) * averageColor;
-
-    FragColor = vec4(pow(averageColor, vec3(1.0/outgamma)),0.0);
+    FragColor = vec4(pow(averageColor, vec3(1.0 / outgamma)), 0.0);
 }
