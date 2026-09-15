@@ -7,7 +7,7 @@ scale_type0 = "source"
 scale0 = "1.0"
 response_time = "0.111"
 
-shader1 = "../../handheld/shaders/color/3ds-color.slang"
+shader1 = "../../handheld/shaders/color/3ds-ips-color.slang"
 filter_linear1 = "false"
 scale_type1 = "source"
 scale1 = "1.0"
