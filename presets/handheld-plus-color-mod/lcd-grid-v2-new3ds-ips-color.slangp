@@ -1,0 +1,27 @@
+shaders = "2"
+
+# Apply the measured transfer response before spatial LCD reconstruction.
+shader0 = "../../handheld/shaders/color/new3ds-ips-color.slang"
+filter_linear0 = "false"
+scale_type0 = "source"
+scale0 = "1.0"
+
+shader1 = "../../handheld/shaders/lcd-cgwg/lcd-grid-v2-3ds.slang"
+filter_linear1 = "false"
+scale_type1 = "viewport"
+scale1 = "1.0"
+
+RSUBPIX_R = "1"
+RSUBPIX_G = "0"
+RSUBPIX_B = "0"
+GSUBPIX_R = "0"
+GSUBPIX_G = "1"
+GSUBPIX_B = "0"
+BSUBPIX_R = "0"
+BSUBPIX_G = "0"
+BSUBPIX_B = "1"
+gain = "1"
+gamma = "2.2"
+blacklevel = "0"
+ambient = "0"
+BGR = "0"
