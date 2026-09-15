@@ -433,46 +433,46 @@ void main()
         FragColor = texture(Source, vTexCoord);
         return;
     }
-
     vec2 logicalTexelSize = region.extent / region.logicalSize;
     vec2 logicalCoord = (vTexCoord - region.origin) / logicalTexelSize;
     vec2 logicalRange = global.OutputSize.zw / logicalTexelSize;
 
-    vec3 cred   = pow(vec3(params.RSUBPIX_R, params.RSUBPIX_G, params.RSUBPIX_B), vec3(outgamma));
+    vec3 cred = pow(vec3(params.RSUBPIX_R, params.RSUBPIX_G, params.RSUBPIX_B), vec3(outgamma));
     vec3 cgreen = pow(vec3(params.GSUBPIX_R, params.GSUBPIX_G, params.GSUBPIX_B), vec3(outgamma));
-    vec3 cblue  = pow(vec3(params.BSUBPIX_R, params.BSUBPIX_G, params.BSUBPIX_B), vec3(outgamma));
+    vec3 cblue = pow(vec3(params.BSUBPIX_R, params.BSUBPIX_G, params.BSUBPIX_B), vec3(outgamma));
 
-    ivec2 tli = ivec2(floor(logicalCoord - vec2(0.4999)));
-
-    vec3 lcol, rcol;
-    float subpix = (logicalCoord.x - 0.4999 - float(tli.x))*3.0;
-    float rsubpix = logicalRange.x * 3.0;
-
-    lcol = vec3(intsmear(subpix+1.0, rsubpix, 1.5, coeffs_x),
-                intsmear(subpix    , rsubpix, 1.5, coeffs_x),
-                intsmear(subpix-1.0, rsubpix, 1.5, coeffs_x));
-    rcol = vec3(intsmear(subpix-2.0, rsubpix, 1.5, coeffs_x),
-                intsmear(subpix-3.0, rsubpix, 1.5, coeffs_x),
-                intsmear(subpix-4.0, rsubpix, 1.5, coeffs_x));
-
-    if (params.BGR > 0.5) {
-        lcol.rgb = lcol.bgr;
-        rcol.rgb = rcol.bgr;
+    // At low output scale the RGB aperture is not resolvable. Blend towards
+    // area-filtered cell colours, per screen, not a blur of the composite.
+    // Both kernels have the same integrated light output, avoiding a gain or
+    // white-point change as the grid fades. At >=4 pixels/cell it is unchanged.
+    float visibility = smoothstep(2.5, 4.0, min(1.0 / logicalRange.x, 1.0 / logicalRange.y));
+    float meanX = intsmear_func(1.0, coeffs_x); // full aperture / RGB period
+    float meanY = 1.26 * intsmear_func(1.0, coeffs_y);
+    vec2 lo = logicalCoord - logicalRange * 0.5;
+    vec2 hi = logicalCoord + logicalRange * 0.5;
+    // Include the entire aperture plus the output-pixel footprint. The old
+    // fixed 2x2 neighbourhood misses edge lobes at low output scales.
+    vec2 support = visibility > 0.0 ? vec2(1.0 / 3.0, 0.13) : vec2(0.0);
+    ivec2 first = ivec2(floor(lo - support));
+    ivec2 last = ivec2(floor(hi + support));
+    vec3 averageColor = vec3(0.0);
+    for (int y = first.y; y <= last.y; ++y) {
+        float plainY = max(0.0, min(hi.y, float(y + 1)) - max(lo.y, float(y))) / logicalRange.y;
+        float gridY = intsmear(logicalCoord.y - float(y) - 0.5, logicalRange.y, 0.63, coeffs_y);
+        float wy = mix(plainY * meanY, gridY, visibility);
+        if (wy <= 0.0) continue;
+        for (int x = first.x; x <= last.x; ++x) {
+            float plainX = max(0.0, min(hi.x, float(x + 1)) - max(lo.x, float(x))) / logicalRange.x;
+            float phase = (logicalCoord.x - float(x) - 0.5) * 3.0;
+            vec3 gridX = vec3(intsmear(phase + 1.0, logicalRange.x * 3.0, 1.5, coeffs_x),
+                              intsmear(phase, logicalRange.x * 3.0, 1.5, coeffs_x),
+                              intsmear(phase - 1.0, logicalRange.x * 3.0, 1.5, coeffs_x));
+            if (params.BGR > 0.5) gridX = gridX.bgr;
+            vec3 wx = mix(vec3(plainX * meanX), gridX, visibility);
+            if (max(max(wx.r, wx.g), wx.b) <= 0.0) continue;
+            averageColor += fetch_logical(region, ivec2(x, y)) * wx * wy;
+        }
     }
-
-    float tcol, bcol;
-    subpix = logicalCoord.y - 0.4999 - float(tli.y);
-    rsubpix = logicalRange.y;
-    tcol = intsmear(subpix    ,rsubpix, 0.63, coeffs_y);
-    bcol = intsmear(subpix-1.0,rsubpix, 0.63, coeffs_y);
-
-    vec3 topLeftColor     = fetch_logical(region, tli + ivec2(0,0)) * lcol * vec3(tcol);
-    vec3 bottomRightColor = fetch_logical(region, tli + ivec2(1,1)) * rcol * vec3(bcol);
-    vec3 bottomLeftColor  = fetch_logical(region, tli + ivec2(0,1)) * lcol * vec3(bcol);
-    vec3 topRightColor    = fetch_logical(region, tli + ivec2(1,0)) * rcol * vec3(tcol);
-
-    vec3 averageColor = topLeftColor + bottomRightColor + bottomLeftColor + topRightColor;
     averageColor = mat3(cred, cgreen, cblue) * averageColor;
-
-    FragColor = vec4(pow(averageColor, vec3(1.0/outgamma)),0.0);
+    FragColor = vec4(pow(averageColor, vec3(1.0 / outgamma)), 0.0);
 }
